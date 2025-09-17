@@ -17,8 +17,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Enable CORS
   app.use(cors({
-    origin: ['http://localhost:5000', 'http://localhost:3000', '*'],
-    credentials: true,
+    origin: [
+      'http://localhost:5000', 
+      'http://localhost:3000',
+      /^https:\/\/.*\.vercel\.app$/,
+      process.env.FRONTEND_URL
+    ].filter(Boolean),
+    credentials: false, // Not needed with Bearer tokens
   }));
 
   // Health check endpoint
