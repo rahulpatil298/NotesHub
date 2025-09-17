@@ -1,0 +1,308 @@
+# Process: Build, Deploy & Use the Multi-Tenant Notes SaaS (no code included)
+
+Below is a clear, end-to-end **process** — what to build, how to structure the project, what endpoints and behavior to implement, how to run & seed locally, and how to deploy frontend and backend **separately** to Vercel using **MongoDB** as requested. This is a blueprint you (or an AI/coder) can follow to implement the app.
+
+---
+
+# 1) High-level architecture & choices
+
+* **Frontend**: Next.js React app (separate repository subfolder `frontend/`) — handles login, notes UI, upgrade button.
+* **Backend**: Next.js with API routes (separate repo subfolder `backend/`) — implements REST API, auth, data access, CORS, health endpoint.
+* **Database**: MongoDB (single database). Use a **shared schema** approach: all tenant-scoped collections include a `tenantId` field (ObjectId or string).
+* **Auth**: JWT-based login. Backend issues JWT on successful login. Frontend stores JWT (e.g., `localStorage`) and sends `Authorization: Bearer <token>` on requests.
+* **Hosting**: Both `frontend/` and `backend/` deployed as separate Vercel projects (or as two projects under the same Vercel account).
+* **CORS**: Backend must enable CORS (allow origin `*` or the frontend origin) to permit automated tests and dashboards.
+
+---
+
+# 2) Project structure (conceptual)
+
+* `multi-tenant-notes-saas/`
+
+  * `backend/` — Next.js API project for all REST endpoints
+  * `frontend/` — Next.js React app for UI
+
+Keep each folder able to be deployed separately to Vercel (each with its own package.json and build/start scripts).
+
+---
+
+# 3) Data modeling (MongoDB, shared schema)
+
+Create three collections (conceptual fields only — no code):
+
+1. **Tenants**
+
+   * `name` (string) — e.g., "Acme"
+   * `slug` (string, unique) — e.g., "acme"
+   * `plan` (enum: `free` | `pro`) — subscription plan
+
+2. **Users**
+
+   * `email` (string, unique)
+   * `passwordHash` (string) — bcrypt hash of password
+   * `role` (enum: `Admin` | `Member`)
+   * `tenantId` (reference to Tenants)
+
+3. **Notes**
+
+   * `title` (string)
+   * `body` (string)
+   * `tenantId` (reference to Tenants)
+   * `authorId` (reference to Users)
+   * timestamps: createdAt, updatedAt
+
+**Important:** All queries on `Users` and `Notes` that are tenant-specific must filter by `tenantId` derived from the authenticated user.
+
+---
+
+# 4) Authentication & Authorization behavior
+
+* **Login (POST /api/auth/login)**:
+
+  * Accepts `email` + `password`. Validate against `Users` collection using bcrypt.
+  * On success, issue JWT signed with `JWT_SECRET` containing at minimum:
+
+    * `sub` → user id
+    * `role` → user role
+    * `tenantId` → tenant id
+  * Returns token and minimal user info.
+
+* **Auth middleware (server-side)**:
+
+  * Validate `Authorization: Bearer <token>`.
+  * Verify JWT signature and expiry.
+  * Load user and tenant from DB and attach to `req` (or route context).
+  * If token invalid or user missing → 401.
+
+* **Role enforcement**:
+
+  * `Admin` only: `POST /api/tenants/:slug/upgrade` (upgrade plan), inviting users (if implemented).
+  * `Member`: allowed only to create/read/update/delete notes for their tenant.
+  * Routes always confirm `req.user.role` and `req.tenant`.
+
+---
+
+# 5) Subscription (feature) gating
+
+* **Free plan**: maximum **3 notes** per tenant.
+
+  * On note creation server checks tenant plan: if `free` and note count ≥ 3 → return `403` with an error explaining the limit.
+* **Pro plan**: unlimited notes.
+* **Upgrade endpoint (Admin only)**: `POST /api/tenants/:slug/upgrade`
+
+  * Sets `tenant.plan = 'pro'` immediately.
+  * After upgrade completes, subsequent create requests should not be blocked by note limit.
+
+---
+
+# 6) Required API endpoints (summary & expected behavior)
+
+> All tenant-sensitive endpoints require an authenticated user; every read/write is scoped by `tenantId`.
+
+* `GET /api/health`
+
+  * Public. Response: `{ "status": "ok" }`.
+
+* `POST /api/auth/login`
+
+  * Public. Returns JWT and user info on success.
+
+* `POST /api/auth/seed` *(optional: developer-only endpoint or a seed script)*
+
+  * Use to seed Tenants (`acme`, `globex`) and the required test users. Alternatively provide a `seed` script run locally.
+
+* `POST /api/tenants/:slug/upgrade`
+
+  * Admin only. Upgrades tenant to Pro → immediate removal of note limit.
+
+* `GET /api/notes`
+
+  * Returns all notes for the current tenant only.
+
+* `POST /api/notes`
+
+  * Creates a tenant-scoped note; enforces subscription limit.
+
+* `GET /api/notes/:id`
+
+  * Returns the note if it belongs to the tenant.
+
+* `PUT /api/notes/:id`
+
+  * Updates the note if it belongs to the tenant.
+
+* `DELETE /api/notes/:id`
+
+  * Deletes the note if it belongs to the tenant.
+
+**Responses & status codes**:
+
+* Unauthorized → `401`
+* Forbidden (role/tenant mismatch/plan limit) → `403`
+* Not found → `404`
+* Success creates → `201`
+* Success other → `200`
+
+---
+
+# 7) Mandatory test accounts (must be created in seed)
+
+Use the following test accounts (password = `password`) — create these during seeding:
+
+* `admin@acme.test` → role: `Admin`, tenant: `Acme`
+* `user@acme.test` → role: `Member`, tenant: `Acme`
+* `admin@globex.test` → role: `Admin`, tenant: `Globex`
+* `user@globex.test` → role: `Member`, tenant: `Globex`
+
+---
+
+# 8) Frontend required behaviors
+
+* **Login page**:
+
+  * Accepts email and password, requests `POST /api/auth/login` on backend.
+  * Stores JWT and user metadata (role, tenantId) client-side.
+
+* **Notes dashboard** (protected):
+
+  * Shows list of notes for the tenant (calls `GET /api/notes`).
+  * Create note form → calls `POST /api/notes`; shows server error when free plan limit reached.
+  * Delete note → calls `DELETE /api/notes/:id`.
+  * Show **“Upgrade to Pro”** button **only** when the logged-in user is `Admin`. Clicking calls `POST /api/tenants/:slug/upgrade`.
+  * After successful upgrade, frontend should re-fetch notes or allow further creations (limit removed immediately by server).
+
+---
+
+# 9) Environment variables (per project)
+
+**Backend**:
+
+* `MONGODB_URI` — MongoDB connection string (Atlas or local).
+* `JWT_SECRET` — long random secret for signing JWTs.
+* Optionally: `NODE_ENV`, `PORT` (Vercel provides runtime).
+* *CORS origins* — configure allowed origins (frontend URL and `*` for tests if absolutely required).
+
+**Frontend**:
+
+* `NEXT_PUBLIC_BACKEND_URL` — URL to backend Vercel deployment (e.g., `https://my-backend.vercel.app`).
+
+When deploying to Vercel, add these environment variables to the respective Vercel project settings.
+
+---
+
+# 10) Local development & seeding (process)
+
+1. Create and configure MongoDB (Atlas or local). Note the `MONGODB_URI`.
+2. Set `JWT_SECRET` locally.
+3. Install dependencies for both `backend/` and `frontend/`.
+4. Start backend dev server (e.g., `npm run dev` in `backend/`).
+5. Start frontend dev server (e.g., `npm run dev` in `frontend/`).
+6. Seed the database:
+
+   * Option A: run a local seed script that creates tenants and users and sample notes.
+   * Option B: POST to a developer-only `POST /api/auth/seed` route (if you implement it).
+7. Use the test accounts above to log in from the frontend and exercise endpoints.
+
+---
+
+# 11) Deployment to Vercel (step-by-step)
+
+**Two separate Vercel projects** — one for `backend/`, one for `frontend/`:
+
+1. **Push code to Git (GitHub/GitLab/Bitbucket)** with two folders `backend/` and `frontend/` at repo root (or separate repos if you prefer).
+2. **Create backend project on Vercel**:
+
+   * New Project → Import repository → set root directory to `backend/`.
+   * Set build command and output if needed (Next.js defaults usually work).
+   * Set environment variables (`MONGODB_URI`, `JWT_SECRET`, etc.) in Vercel project settings.
+   * Deploy.
+3. **Create frontend project on Vercel**:
+
+   * New Project → Import repository → set root directory to `frontend/`.
+   * Add environment variable `NEXT_PUBLIC_BACKEND_URL` pointing to the backend deployment URL.
+   * Deploy.
+4. **CORS**: Ensure backend CORS allows the frontend origin or `*` for automated test access.
+5. **Seed**: After backend is deployed, seed tenants and users (either by running seed script locally against the deployed DB or call the seed endpoint if implemented).
+
+**Notes**:
+
+* Vercel serverless functions will be used for API routes — ensure DB connection logic reuses connections across invocations (use cached global connection).
+* If you prefer one project on Vercel that contains both frontend and backend, you can, but the automated test harness may expect backend endpoints at a stable URL; separate deployments are clearer.
+
+---
+
+# 12) How to use the app (end-user steps)
+
+1. Open frontend URL (Vercel project).
+2. Login using one of the test accounts (password: `password`).
+3. View list of notes for your tenant.
+4. Create notes until you hit the Free plan limit (3 notes). If you’re a `Member`, you can still create/edit/delete notes but cannot upgrade.
+5. If logged in as `Admin`, click “Upgrade to Pro” (sends `POST /api/tenants/:slug/upgrade`) — after success, retry creating notes (limit removed).
+6. Use logout to clear client token.
+
+---
+
+# 13) How automated tests will validate behavior (what to ensure during implementation)
+
+* **Health check**: `GET /api/health` returns `{ "status": "ok" }`.
+* **Login**: `POST /api/auth/login` works for all four predefined accounts and returns a JWT.
+* **Tenant isolation**: Authenticated requests never return notes from another tenant (always filter by `tenantId`).
+* **Role enforcement**:
+
+  * A `Member` cannot call `POST /api/tenants/:slug/upgrade` (should be `403`).
+  * Admin-only routes require `role === 'Admin'`.
+* **Subscription rule**:
+
+  * Free plan tenants blocked from creating a 4th note (server returns `403`) until `POST /api/tenants/:slug/upgrade` is called by Admin.
+  * After upgrade, creating more notes is allowed immediately.
+* **CRUD endpoints**: All `POST/GET/PUT/DELETE /api/notes*` perform as specified and only operate on tenant-scoped data.
+* **Frontend presence**: Frontend is accessible and supports login, notes listing, create/delete, and visible “Upgrade to Pro” button for Admins.
+
+---
+
+# 14) Security & production considerations (recommendations)
+
+* Never store plaintext passwords. Use bcrypt for hashing.
+* Use a sufficiently strong `JWT_SECRET`.
+* Use HTTPS in production (Vercel provides HTTPS).
+* Limit CORS origins in production to only the frontend domain(s) — do not leave `*` unless required for testing.
+* Validate and sanitize inputs to avoid injection attacks.
+* Implement rate limiting on login endpoints to reduce brute-force risk.
+* Consider refresh tokens or short JWT expiry for higher security if needed.
+
+---
+
+# 15) README content to include (what your final README should contain)
+
+* Project description and architecture diagram/summary.
+* Multi-tenancy approach explanation (shared schema with `tenantId`).
+* Environment variables for both frontend and backend.
+* How to run locally (install, start, seed).
+* How to deploy to Vercel (step list + env vars).
+* API endpoints list with brief request/response expectations.
+* Test accounts (the four required accounts and password).
+* Notes about CORS, security, and how subscription gating works.
+* How to run automated tests (if you provide a test script).
+
+---
+
+# 16) Quick checklist before final deployment
+
+* [ ] MongoDB connection works from Vercel (allow IP or use Atlas).
+* [ ] Environment variables set in both Vercel projects.
+* [ ] Seed test tenants & users added to DB.
+* [ ] CORS configured so test harness can call backend.
+* [ ] JWT secrets set and secure.
+* [ ] Frontend `NEXT_PUBLIC_BACKEND_URL` points to deployed backend.
+* [ ] Health endpoint returns `"ok"`.
+* [ ] Admins can upgrade and change tenant plan immediately.
+
+---
+
+If you want, I can now:
+
+* Produce the **README.md** text (populated and ready to drop into your repo) that you can include with the project, or
+* Produce the **exact sequence of terminal commands** you would run to set up the dev environment and deploy to Vercel, or
+* Generate the **seed data JSON** and exact HTTP requests (curl examples) to seed and test the deployed endpoints.
+
+Which of these next steps would you like me to do now?
