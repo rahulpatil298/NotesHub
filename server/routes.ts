@@ -4,7 +4,6 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
 import { storage } from "./storage.js";
-import { connectDB } from './models/index.js';
 import { authenticateToken, requireAdmin, AuthRequest } from './middleware/auth.js';
 import { 
   loginSchema, 
@@ -14,8 +13,6 @@ import {
 } from '@shared/schema.js';
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Connect to MongoDB
-  await connectDB();
 
   // Enable CORS
   app.use(cors({
