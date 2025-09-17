@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import cors from 'cors';
-import { storage } from "./storage.js";
+import { getStorage } from "./storage.js";
 import { authenticateToken, requireAdmin, AuthRequest } from './middleware/auth.js';
 import { 
   loginSchema, 
@@ -32,7 +32,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { email, password } = loginSchema.parse(req.body);
       
       // Find user by email
-      const user = await storage.getUserByEmail(email);
+      const mongoStorage = await getStorage();
+      const user = await mongoStorage.getUserByEmail(email);
       if (!user) {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
@@ -44,7 +45,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get tenant information
-      const tenant = await storage.getTenant(user.tenantId);
+      const tenant = await mongoStorage.getTenant(user.tenantId);
       if (!tenant) {
         return res.status(401).json({ message: 'Tenant not found' });
       }
@@ -93,7 +94,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { email, password, organizationName } = signupSchema.parse(req.body);
       
       // Check if user already exists
-      const existingUser = await storage.getUserByEmail(email);
+      const mongoStorage = await getStorage();
+      const existingUser = await mongoStorage.getUserByEmail(email);
       if (existingUser) {
         return res.status(400).json({ message: 'Email already registered' });
       }
@@ -105,13 +107,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .substring(0, 50);
       
       // Check if tenant slug already exists
-      const existingTenant = await storage.getTenantBySlug(slug);
+      const existingTenant = await mongoStorage.getTenantBySlug(slug);
       if (existingTenant) {
         return res.status(400).json({ message: 'Organization name already taken' });
       }
 
       // Create tenant
-      const tenant = await storage.createTenant({
+      const tenant = await mongoStorage.createTenant({
         name: organizationName,
         slug,
         plan: 'free',
@@ -119,7 +121,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Hash password and create user
       const passwordHash = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({
+      const user = await mongoStorage.createUser({
         email,
         passwordHash,
         role: 'Admin', // First user is always admin
@@ -168,19 +170,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/auth/seed', async (req, res) => {
     try {
       // Check if data already exists
-      const existingTenant = await storage.getTenantBySlug('acme');
+      const mongoStorage = await getStorage();
+      const existingTenant = await mongoStorage.getTenantBySlug('acme');
       if (existingTenant) {
         return res.json({ message: 'Seed data already exists' });
       }
 
       // Create tenants
-      const acmeTenant = await storage.createTenant({
+      const acmeTenant = await mongoStorage.createTenant({
         name: 'Acme Corporation',
         slug: 'acme',
         plan: 'free',
       });
 
-      const globexTenant = await storage.createTenant({
+      const globexTenant = await mongoStorage.createTenant({
         name: 'Globex Corporation',
         slug: 'globex',
         plan: 'free',
@@ -217,7 +220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ];
 
       for (const userData of users) {
-        await storage.createUser(userData);
+        await mongoStorage.createUser(userData);
       }
 
       res.status(201).json({ message: 'Seed data created successfully' });
@@ -234,7 +237,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all notes for current tenant
   app.get('/api/notes', async (req: AuthRequest, res) => {
     try {
-      const notes = await storage.getNotesByTenant(req.user!.tenantId);
+      const mongoStorage = await getStorage();
+      const notes = await mongoStorage.getNotesByTenant(req.user!.tenantId);
       res.json(notes);
     } catch (error) {
       console.error('Get notes error:', error);
@@ -245,7 +249,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get single note
   app.get('/api/notes/:id', async (req: AuthRequest, res) => {
     try {
-      const note = await storage.getNote(req.params.id, req.user!.tenantId);
+      const mongoStorage = await getStorage();
+      const note = await mongoStorage.getNote(req.params.id, req.user!.tenantId);
       if (!note) {
         return res.status(404).json({ message: 'Note not found' });
       }
@@ -262,9 +267,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const noteData = insertNoteSchema.parse(req.body);
       const user = req.user!;
 
+      const mongoStorage = await getStorage();
+
       // Check subscription limit for free plan
       if (user.tenant.plan === 'free') {
-        const noteCount = await storage.countNotesByTenant(user.tenantId);
+        const noteCount = await mongoStorage.countNotesByTenant(user.tenantId);
         if (noteCount >= 3) {
           return res.status(403).json({ 
             message: 'Note limit reached. Free plan allows maximum 3 notes. Upgrade to Pro for unlimited notes.' 
@@ -272,7 +279,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const note = await storage.createNote({
+      const note = await mongoStorage.createNote({
         ...noteData,
         tenantId: user.tenantId,
         authorId: user._id,
@@ -289,7 +296,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/notes/:id', async (req: AuthRequest, res) => {
     try {
       const updates = updateNoteSchema.parse(req.body);
-      const note = await storage.updateNote(req.params.id, req.user!.tenantId, updates);
+      const mongoStorage = await getStorage();
+      const note = await mongoStorage.updateNote(req.params.id, req.user!.tenantId, updates);
       
       if (!note) {
         return res.status(404).json({ message: 'Note not found' });
@@ -305,7 +313,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete note
   app.delete('/api/notes/:id', async (req: AuthRequest, res) => {
     try {
-      const deleted = await storage.deleteNote(req.params.id, req.user!.tenantId);
+      const mongoStorage = await getStorage();
+      const deleted = await mongoStorage.deleteNote(req.params.id, req.user!.tenantId);
       
       if (!deleted) {
         return res.status(404).json({ message: 'Note not found' });
@@ -329,7 +338,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: 'Cannot upgrade other tenants' });
       }
 
-      const updatedTenant = await storage.updateTenantPlan(user.tenantId, 'pro');
+      const mongoStorage = await getStorage();
+      const updatedTenant = await mongoStorage.updateTenantPlan(user.tenantId, 'pro');
       
       if (!updatedTenant) {
         return res.status(404).json({ message: 'Tenant not found' });

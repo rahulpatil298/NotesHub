@@ -38,9 +38,9 @@ export const NoteModel = mongoose.model('Note', noteSchema);
 // MongoDB connection
 export async function connectDB() {
   try {
-    const mongoUri = process.env.MONGODB_URI;
+    const mongoUri = process.env.MONGODB_CONNECTION_STRING;
     if (!mongoUri) {
-      throw new Error('MONGODB_URI environment variable is required');
+      throw new Error('MONGODB_CONNECTION_STRING environment variable is required');
     }
     
     await mongoose.connect(mongoUri);
