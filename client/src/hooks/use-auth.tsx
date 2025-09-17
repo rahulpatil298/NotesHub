@@ -1,11 +1,12 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { AuthUser, AuthResponse } from '@shared/schema';
-import { login as apiLogin } from '@/lib/api';
+import { login as apiLogin, signup as apiSignup } from '@/lib/api';
 
 interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, organizationName: string) => Promise<void>;
   logout: () => void;
   isLoading: boolean;
   updateUser: (user: AuthUser) => void;
@@ -68,13 +69,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('auth_user');
   };
 
+  const signup = async (email: string, password: string, organizationName: string) => {
+    try {
+      const response: AuthResponse = await apiSignup(email, password, organizationName);
+      
+      setToken(response.token);
+      const authUser: AuthUser = {
+        _id: response.user._id,
+        email: response.user.email,
+        role: response.user.role,
+        tenantId: response.user.tenant._id,
+        tenant: response.user.tenant,
+      };
+      setUser(authUser);
+      
+      // Save to localStorage
+      localStorage.setItem('auth_token', response.token);
+      localStorage.setItem('auth_user', JSON.stringify(authUser));
+    } catch (error) {
+      console.error('Signup failed:', error);
+      throw error;
+    }
+  };
+
   const updateUser = (updatedUser: AuthUser) => {
     setUser(updatedUser);
     localStorage.setItem('auth_user', JSON.stringify(updatedUser));
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isLoading, updateUser }}>
+    <AuthContext.Provider value={{ user, token, login, signup, logout, isLoading, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

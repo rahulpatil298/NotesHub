@@ -7,6 +7,7 @@ import { storage } from "./storage.js";
 import { authenticateToken, requireAdmin, AuthRequest } from './middleware/auth.js';
 import { 
   loginSchema, 
+  signupSchema,
   insertNoteSchema, 
   updateNoteSchema,
   AuthResponse 
@@ -82,6 +83,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(response);
     } catch (error) {
       console.error('Login error:', error);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  });
+
+  // Signup endpoint
+  app.post('/api/auth/signup', async (req, res) => {
+    try {
+      const { email, password, organizationName } = signupSchema.parse(req.body);
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ message: 'Email already registered' });
+      }
+
+      // Create tenant slug from organization name
+      const slug = organizationName.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, '-')
+        .substring(0, 50);
+      
+      // Check if tenant slug already exists
+      const existingTenant = await storage.getTenantBySlug(slug);
+      if (existingTenant) {
+        return res.status(400).json({ message: 'Organization name already taken' });
+      }
+
+      // Create tenant
+      const tenant = await storage.createTenant({
+        name: organizationName,
+        slug,
+        plan: 'free',
+      });
+
+      // Hash password and create user
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = await storage.createUser({
+        email,
+        passwordHash,
+        role: 'Admin', // First user is always admin
+        tenantId: tenant._id!,
+      });
+
+      // Generate JWT
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) {
+        throw new Error('JWT_SECRET environment variable is required');
+      }
+
+      const token = jwt.sign(
+        {
+          sub: user._id,
+          role: user.role,
+          tenantId: user.tenantId,
+        },
+        jwtSecret,
+        { expiresIn: '24h' }
+      );
+
+      const response: AuthResponse = {
+        token,
+        user: {
+          _id: user._id!,
+          email: user.email,
+          role: user.role,
+          tenant: {
+            _id: tenant._id!,
+            name: tenant.name,
+            slug: tenant.slug,
+            plan: tenant.plan,
+          },
+        },
+      };
+
+      res.status(201).json(response);
+    } catch (error) {
+      console.error('Signup error:', error);
       res.status(500).json({ message: 'Internal server error' });
     }
   });

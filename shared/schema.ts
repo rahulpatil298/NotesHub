@@ -33,6 +33,12 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+export const signupSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  organizationName: z.string().min(1, "Organization name is required"),
+});
+
 // Note Schema
 export const noteSchema = z.object({
   _id: z.string().optional(),
@@ -60,6 +66,7 @@ export type InsertTenant = z.infer<typeof insertTenantSchema>;
 export type User = z.infer<typeof userSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type LoginRequest = z.infer<typeof loginSchema>;
+export type SignupRequest = z.infer<typeof signupSchema>;
 export type Note = z.infer<typeof noteSchema>;
 export type InsertNote = z.infer<typeof insertNoteSchema>;
 export type UpdateNote = z.infer<typeof updateNoteSchema>;

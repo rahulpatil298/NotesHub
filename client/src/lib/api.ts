@@ -49,6 +49,11 @@ export async function login(email: string, password: string) {
   return response.json();
 }
 
+export async function signup(email: string, password: string, organizationName: string) {
+  const response = await apiRequest('POST', '/auth/signup', { email, password, organizationName }, false);
+  return response.json();
+}
+
 export async function seedDatabase() {
   const response = await apiRequest('POST', '/auth/seed', {}, false);
   return response.json();
