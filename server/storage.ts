@@ -441,15 +441,27 @@ class MongoStorage implements IStorage {
   }
 }
 
-// Initialize MongoDB connection and export storage
+// Initialize MongoDB connection and export storage with fallback
 let mongoStorage: MongoStorage | null = null;
+let memoryStorageFallback: MemStorage | null = null;
 
 async function initializeStorage(): Promise<IStorage> {
-  if (!mongoStorage) {
-    await connectDB();
-    mongoStorage = new MongoStorage();
+  try {
+    if (!mongoStorage) {
+      await connectDB();
+      mongoStorage = new MongoStorage();
+      console.log('✅ Successfully connected to MongoDB');
+    }
+    return mongoStorage;
+  } catch (error) {
+    console.error('❌ MongoDB connection failed, falling back to memory storage:', error instanceof Error ? error.message : String(error));
+    console.log('ℹ️  To fix this: Add 0.0.0.0/0 to your MongoDB Atlas IP whitelist or configure proper IP restrictions.');
+    
+    if (!memoryStorageFallback) {
+      memoryStorageFallback = new MemStorage();
+    }
+    return memoryStorageFallback;
   }
-  return mongoStorage;
 }
 
 // For compatibility, we'll export a function that returns the storage instance
