@@ -231,8 +231,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Protected routes (require authentication)
-  app.use('/api/notes*', authenticateToken);
-  app.use('/api/tenants*', authenticateToken);
+  app.use('/api/notes', authenticateToken);
+  app.use('/api/notes/*', authenticateToken);
+  app.use('/api/tenants', authenticateToken);
+  app.use('/api/tenants/*', authenticateToken);
 
   // Get all notes for current tenant
   app.get('/api/notes', async (req: AuthRequest, res) => {

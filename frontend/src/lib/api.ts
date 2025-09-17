@@ -1,6 +1,7 @@
 import { queryClient } from "./queryClient";
 
-const API_BASE = '/api';
+// Use environment variable for production backend URL, fallback to local for development
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export async function apiRequest(
   method: string,
